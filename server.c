@@ -14,6 +14,7 @@
 #define BYE_MESSAGE "BYE"
 #define MAX_NICK_LENGTH 20
 
+char SERVER_IP[] = "128.226.114.201";
 char nicknames[MAX_CLIENTS][MAX_NICK_LENGTH]; // Array to store nicknames
 
 typedef struct
@@ -152,15 +153,42 @@ void *handle_client(void *arg)
                 char *nickname = strtok(NULL, " ");
                 if (nickname)
                 {
-                    // Set the nickname for the client
-                    strncpy(nicknames[client_socket], nickname, MAX_NICK_LENGTH - 1);
-                    nicknames[client_socket][MAX_NICK_LENGTH - 1] = '\0';
-                    printf("Client %d set nickname to %s\n", client_socket, nicknames[client_socket]);
+                    // Check if nickname is already in use
+                    int nick_in_use = 0;
+                    for (int i = 0; i < MAX_CLIENTS; i++)
+                    {
+                        if (strcmp(nicknames[i], nickname) == 0)
+                        {
+                            nick_in_use = 1;
+                            break;
+                        }
+                    }
+
+                    if (!nick_in_use)
+                    {
+                        strncpy(nicknames[client_socket], nickname, MAX_NICK_LENGTH - 1);
+                        nicknames[client_socket][MAX_NICK_LENGTH - 1] = '\0';
+                        printf("Client %d set nickname to %s\n", client_socket, nicknames[client_socket]);
+                        // Send RPL_NICK
+                        char reply_msg[BUFFER_SIZE];
+                        snprintf(reply_msg, BUFFER_SIZE, ":%s 401 %s %s :Nickname is now %s\n", SERVER_IP, nicknames[client_socket], nicknames[client_socket], nicknames[client_socket]);
+                        write(client_socket, reply_msg, strlen(reply_msg));
+                    }
+                    else
+                    {
+                        // Send ERR_NICKNAMEINUSE
+                        char err_msg[BUFFER_SIZE];
+                        snprintf(err_msg, BUFFER_SIZE, ":%s 433 %s %s :Nickname is already in use\n", SERVER_IP, nicknames[client_socket], nicknames[client_socket]);
+                        write(client_socket, err_msg, strlen(err_msg));
+                    }
                 }
-                // Send confirmation message back to the client
-                // char confirmation_msg[BUFFER_SIZE];
-                snprintf(buffer, BUFFER_SIZE, "Your nickname has been set to %s\n", nicknames[client_socket]);
-                write(client_socket, buffer, strlen(buffer));
+                else
+                {
+                    // Send ERR_NONICKNAMEGIVEN
+                    char err_msg[BUFFER_SIZE];
+                    snprintf(err_msg, BUFFER_SIZE, ":%s 431 * :No nickname given\n", SERVER_IP);
+                    write(client_socket, err_msg, strlen(err_msg));
+                }
             }
             else if (strcmp(command, "QUIT") == 0)
             {
