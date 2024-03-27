@@ -11,11 +11,18 @@
 #define MAX_CLIENTS 25
 #define MAX_CHANNELS 25
 #define CHANNEL_NAME_LEN 50
-#define BYE_MESSAGE "BYE"
 #define MAX_NICK_LENGTH 20
 
 char SERVER_IP[] = "128.226.114.201";
 char nicknames[MAX_CLIENTS][MAX_NICK_LENGTH]; // Array to store nicknames
+
+typedef struct
+{
+    char nickname[MAX_NICK_LENGTH];
+    char realname[BUFFER_SIZE];
+} UserInfo;
+
+UserInfo user_info[MAX_CLIENTS]; // Array to store user information
 
 typedef struct
 {
@@ -29,6 +36,8 @@ Channel channels[MAX_CHANNELS];
 int channelCount = 0;
 
 void *handle_client(void *arg);
+void handle_nick_command(int client_socket, const char *nickname);
+void handle_user_command(int client_socket, const char *nickname, const char *realname);
 void join_channel(int client_socket, const char *channelName);
 void part_channel(int client_socket, const char *channelName);
 void set_or_get_topic(int client_socket, const char *channelName, const char *topic);
@@ -107,6 +116,7 @@ void *handle_client(void *arg)
     {
         printf("Error getting client IP\n");
     }
+
     while (1)
     {
         char buffer[BUFFER_SIZE] = {0};
@@ -153,34 +163,7 @@ void *handle_client(void *arg)
                 char *nickname = strtok(NULL, " ");
                 if (nickname)
                 {
-                    // Check if nickname is already in use
-                    int nick_in_use = 0;
-                    for (int i = 0; i < MAX_CLIENTS; i++)
-                    {
-                        if (strcmp(nicknames[i], nickname) == 0)
-                        {
-                            nick_in_use = 1;
-                            break;
-                        }
-                    }
-
-                    if (!nick_in_use)
-                    {
-                        strncpy(nicknames[client_socket], nickname, MAX_NICK_LENGTH - 1);
-                        nicknames[client_socket][MAX_NICK_LENGTH - 1] = '\0';
-                        printf("Client %d set nickname to %s\n", client_socket, nicknames[client_socket]);
-                        // Send RPL_NICK
-                        char reply_msg[BUFFER_SIZE];
-                        snprintf(reply_msg, BUFFER_SIZE, ":%s 401 %s %s :Nickname is now %s\n", SERVER_IP, nicknames[client_socket], nicknames[client_socket], nicknames[client_socket]);
-                        write(client_socket, reply_msg, strlen(reply_msg));
-                    }
-                    else
-                    {
-                        // Send ERR_NICKNAMEINUSE
-                        char err_msg[BUFFER_SIZE];
-                        snprintf(err_msg, BUFFER_SIZE, ":%s 433 %s %s :Nickname is already in use\n", SERVER_IP, nicknames[client_socket], nicknames[client_socket]);
-                        write(client_socket, err_msg, strlen(err_msg));
-                    }
+                    handle_nick_command(client_socket, nickname);
                 }
                 else
                 {
@@ -190,10 +173,27 @@ void *handle_client(void *arg)
                     write(client_socket, err_msg, strlen(err_msg));
                 }
             }
+            else if (strcmp(command, "USER") == 0)
+            {
+                char *nickname = strtok(NULL, " ");
+                char *mode = strtok(NULL, " ");
+                char *realname = strtok(NULL, "");
+                if (nickname && mode && realname)
+                {
+                    handle_user_command(client_socket, nickname, realname);
+                }
+                else
+                {
+                    // Send ERR_NEEDMOREPARAMS
+                    char err_msg[BUFFER_SIZE];
+                    snprintf(err_msg, BUFFER_SIZE, ":%s 461 * :Not enough parameters\n", SERVER_IP);
+                    write(client_socket, err_msg, strlen(err_msg));
+                }
+            }
             else if (strcmp(command, "QUIT") == 0)
             {
                 char bye_message[BUFFER_SIZE];
-                snprintf(bye_message, BUFFER_SIZE, "%s %s\n", BYE_MESSAGE, client_ip);
+                snprintf(bye_message, BUFFER_SIZE, "%s %s\n", "BYE", client_ip);
                 write(client_socket, bye_message, strlen(bye_message)); // Send BYE message to client
                 close(client_socket);
                 printf("Client %s disconnected.\n", client_ip);
@@ -201,6 +201,62 @@ void *handle_client(void *arg)
             }
         }
     }
+}
+
+void handle_nick_command(int client_socket, const char *nickname)
+{
+    // Check if the nickname is already in use
+    int nick_in_use = 0;
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (strcmp(user_info[i].nickname, nickname) == 0)
+        {
+            nick_in_use = 1;
+            break;
+        }
+    }
+
+    if (!nick_in_use)
+    {
+        strncpy(user_info[client_socket].nickname, nickname, MAX_NICK_LENGTH - 1);
+        user_info[client_socket].nickname[MAX_NICK_LENGTH - 1] = '\0';
+        printf("Client %d set nickname to %s\n", client_socket, user_info[client_socket].nickname);
+        // Send RPL_NICK
+        char reply_msg[BUFFER_SIZE];
+        snprintf(reply_msg, BUFFER_SIZE, ":%s 401 %s %s :Nickname is now %s\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname, user_info[client_socket].nickname);
+        write(client_socket, reply_msg, strlen(reply_msg));
+    }
+    else
+    {
+        // Send ERR_NICKNAMEINUSE
+        char err_msg[BUFFER_SIZE];
+        snprintf(err_msg, BUFFER_SIZE, ":%s 433 %s %s :Nickname is already in use\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname);
+        write(client_socket, err_msg, strlen(err_msg));
+    }
+}
+
+void handle_user_command(int client_socket, const char *nickname, const char *realname)
+{
+    // Check if user is already registered
+    if (strlen(user_info[client_socket].nickname) > 0)
+    {
+        // Send ERR_ALREADYREGISTRED
+        char err_msg[BUFFER_SIZE];
+        snprintf(err_msg, BUFFER_SIZE, ":%s 462 %s %s :You may not reregister\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname);
+        write(client_socket, err_msg, strlen(err_msg));
+        return;
+    }
+
+    // Store user information
+    strncpy(user_info[client_socket].nickname, nickname, MAX_NICK_LENGTH - 1);
+    user_info[client_socket].nickname[MAX_NICK_LENGTH - 1] = '\0';
+    strncpy(user_info[client_socket].realname, realname, BUFFER_SIZE - 1);
+    user_info[client_socket].realname[BUFFER_SIZE - 1] = '\0';
+
+    // Send RPL_WELCOME
+    char welcome_msg[BUFFER_SIZE];
+    snprintf(welcome_msg, BUFFER_SIZE, ":%s 001 %s :Welcome to the IRC network %s!%s@%s\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname, user_info[client_socket].nickname, SERVER_IP);
+    write(client_socket, welcome_msg, strlen(welcome_msg));
 }
 
 void join_channel(int client_socket, const char *channelName)
