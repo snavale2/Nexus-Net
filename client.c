@@ -4,15 +4,18 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define PORT 6666
+#define PORT 8080
 #define SERVER_IP "127.0.0.1"
 #define BUFFER_SIZE 1024
+#define NICK_COMMAND "NICK"
+#define QUIT_MESSAGE "QUIT"
 
 int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
-    char message[BUFFER_SIZE] = "Hello from client";
+    char message[BUFFER_SIZE];
     char buffer[BUFFER_SIZE] = {0};
+    int valread;
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Socket creation error");
@@ -33,13 +36,31 @@ int main() {
         return -1;
     }
 
-    // Send message to server
-    send(sock, message, strlen(message), 0);
-    printf("Message sent to server\n");
+    
+    while (1) {
+        printf("Enter message (type 'QUIT' to exit):\n");
+        fgets(message, BUFFER_SIZE, stdin);
 
-    // Read server's response
-    read(sock, buffer, BUFFER_SIZE);
-    printf("Server response: %s\n", buffer);
+        // Send message to server
+        send(sock, message, strlen(message), 0);
+
+
+        // Receive response from server
+        valread = read(sock, buffer, BUFFER_SIZE);
+        printf("Server response: %s\n", buffer);
+
+        // Check if message is "QUIT"
+        if (strncmp(message, QUIT_MESSAGE, strlen(QUIT_MESSAGE)) == 0) {
+            // Receive response from server after sending QUIT
+            //valread = read(sock, buffer, BUFFER_SIZE);
+            //printf("Server response after QUIT: %s", buffer);
+            break; // Exit loop and close connection
+        }
+
+        memset(buffer, 0, BUFFER_SIZE); // Clear buffer for next message
+    }
+
+    close(sock); // Close connection
 
     return 0;
 }
