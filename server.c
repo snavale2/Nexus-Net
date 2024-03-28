@@ -158,6 +158,18 @@ void *handle_client(void *arg)
                 char *channelName = strtok(NULL, " ");
                 list_names(client_socket, channelName);
             }
+            else if (strcmp(command, "TIME") == 0)
+            {
+                time_t current_time;
+                char time_str[BUFFER_SIZE];
+                time(&current_time);
+                strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&current_time));
+
+                // Send local time to client
+                char reply_msg[BUFFER_SIZE];
+                snprintf(reply_msg, BUFFER_SIZE, ":%s 391 %s %s :%s\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname, time_str);
+                write(client_socket, reply_msg, strlen(reply_msg));
+            }
             else if (strcmp(command, "NICK") == 0)
             {
                 char *nickname = strtok(NULL, " ");
