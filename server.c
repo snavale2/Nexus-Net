@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <ctype.h>
+#include <time.h>
 #include <asm-generic/socket.h>
 
 #define PORT 8080
@@ -26,9 +27,11 @@
 #define ERR_NOSUCHNICK 309
 
 #define ERR_NOTONCHANNEL 201
-
+#define ERR_NOSUCHNICK_OR_NOSUCHCHANNEL 401
 #define ERR_TOOMANYMATCHES 301
 #define ERR_NOSUCHSERVER 302
+#define ERR_NOSUCHSERVER 402
+#define RPL_TIME 391
 
 void send_error(int client_socket, int error_code)
 {
@@ -71,7 +74,7 @@ void send_error(int client_socket, int error_code)
     case ERR_NOTEXTTOSEND:
         error_message = ":%s 412 :No text to send\n";
         break;
-    case ERR_NOSUCHNICK:
+    case ERR_NOSUCHNICK_OR_NOSUCHCHANNEL:
         error_message = ":%s 401 :No such nick/channel\n";
         break;
 
@@ -90,6 +93,7 @@ typedef struct
 {
     char nickname[MAX_NICK_LENGTH];
     char realname[BUFFER_SIZE];
+    int client_socket;
 } UserInfo;
 
 UserInfo user_info[MAX_CLIENTS]; // Array to store user information
@@ -114,6 +118,7 @@ void set_or_get_topic(int client_socket, const char *channelName, const char *to
 void list_names(int client_socket, const char *channelName);
 void handle_privmsg(int client_socket, const char *msgtarget, const char *message);
 void remove_extra_spaces(char *str);
+void handle_time_command(int client_socket);
 
 int main()
 {
@@ -157,6 +162,18 @@ int main()
         {
             perror("accept");
             exit(EXIT_FAILURE);
+        }
+
+        // Populate user_info with client information
+        int index;
+        for (index = 0; index < MAX_CLIENTS; index++)
+        {
+            if (user_info[index].client_socket == 0)
+            { // Find an empty slot in user_info array
+                user_info[index].client_socket = new_socket;
+                printf("Client connected with socket %d\n", user_info[index].client_socket); // Debug output
+                break;
+            }
         }
 
         pthread_t tid;
@@ -268,9 +285,12 @@ void *handle_client(void *arg)
                 send_error(client_socket, ERR_NEEDMOREPARAMS);
             }
         }
-        else if (strcmp(command, "QUIT") == 0)
+        else if ((strstr(command, "QUIT") != NULL) || (strcmp(command, "QUIT") == 0))
         {
             printf("Client %s quit.\n", client_ip);
+            char response[BUFFER_SIZE];
+            strcpy(response, "BYE");
+            send(client_socket, response, strlen(response), 0);
             break; // Exit the loop if client sends QUIT command
         }
         else if (strcmp(command, "PRIVMSG") == 0)
@@ -285,6 +305,11 @@ void *handle_client(void *arg)
             {
                 send_error(client_socket, ERR_NORECIPIENT);
             }
+        }
+        else if (strstr(command, "TIME") != NULL)
+        {
+            char *target = strtok(NULL, " ");
+            handle_time_command(client_socket);
         }
         else
         {
@@ -404,6 +429,12 @@ void join_channel(int client_socket, const char *channelName)
             send(client_socket, response, strlen(response), 0);
         }
     }
+
+    // printf("-----\n");
+    // for(int i=0; i<MAX_CLIENTS; i++){
+    //     printf(user_info[i].client_socket,"\n");
+    // }
+    // printf("-----\n");
 }
 
 void part_channel(int client_socket, const char *channelName)
@@ -461,12 +492,9 @@ void set_or_get_topic(int client_socket, const char *channelName, const char *to
 {
     char response[BUFFER_SIZE];
 
-
     int found = 0;
     for (int i = 0; i < channelCount; i++)
     {
-        printf(channels[i].channelName);
-        printf(channelName);
 
         remove_extra_spaces(channels[i].channelName);
         remove_extra_spaces(channelName);
@@ -552,6 +580,14 @@ void list_names(int client_socket, const char *channelName)
 void handle_privmsg(int client_socket, const char *msgtarget, const char *message)
 {
     char response[BUFFER_SIZE];
+    printf("-----\n");
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        printf(user_info[i].nickname, "  ", user_info[i].client_socket, "\n");
+    }
+    printf("-----\n");
+
+    remove_extra_spaces(msgtarget);
 
     if (!msgtarget || !message)
     {
@@ -566,67 +602,89 @@ void handle_privmsg(int client_socket, const char *msgtarget, const char *messag
     }
 
     // Assume msgtarget can be a nickname or channel
-    if (msgtarget[0] == '#')
-    { // Channel message
-        int found = 0;
-        for (int i = 0; i < channelCount; i++)
+    // Channel message
+    int found = 0;
+    for (int i = 0; i < channelCount; i++)
+    {
+        remove_extra_spaces(channels[i].channelName);
+
+        if (strcmp(channels[i].channelName, msgtarget) == 0)
         {
-            if (strcmp(channels[i].channelName, msgtarget) == 0)
+            printf("here1");
+            found = 1;
+            // Broadcast message to all clients in the channel
+            for (int j = 0; j < channels[i].clientCount; j++)
             {
-                found = 1;
-                // Broadcast message to all clients in the channel
-                for (int j = 0; j < channels[i].clientCount; j++)
+                if (channels[i].clients[j] != client_socket)
                 {
-                    if (channels[i].clients[j] != client_socket)
-                    {
-                        snprintf(response, BUFFER_SIZE, "%s: %s\n", msgtarget, message);
-                        send(channels[i].clients[j], response, strlen(response), 0);
-                    }
+                    snprintf(response, BUFFER_SIZE, "%s: %s\n", msgtarget, message);
+                    send(channels[i].clients[j], response, strlen(response), 0);
                 }
-                break;
             }
-        }
-        if (!found)
-        {
-            send_error(client_socket, ERR_NOSUCHNICK);
+            break;
         }
     }
-    else
-    { // Private message to a user
-        int found = 0;
-        for (int i = 0; i < MAX_CLIENTS; i++)
-        {
+    // Private message to a user
+    for (int i = 0; i < 10; i++)
+    {
+        // printf("Checking nickname: %s\n", user_info[i].nickname);
+        // printf("Target nickname: %s\n", msgtarget);
+        remove_extra_spaces(user_info[i].nickname);
+        // printf("After removing spaces: %s\n", user_info[i].nickname);
+        if (user_info[i].nickname[0] != '\0' && msgtarget[0] != '\0')
+        { // Check for null-terminated strings
             if (strcmp(user_info[i].nickname, msgtarget) == 0)
             {
+                printf("Match found for %s\n", msgtarget);
                 found = 1;
-                snprintf(response, BUFFER_SIZE, "From %s: %s\n", user_info[client_socket].nickname, message);
-                send(i, response, strlen(response), 0);
+                snprintf(response, BUFFER_SIZE, "From %s: %s\n", user_info[i].nickname, message);
+                // Send the private message using the client's socket descriptor
+                send(user_info[i].client_socket, response, strlen(response), 0);
+                printf(user_info[i].client_socket, "\n");
                 break;
             }
         }
-        if (!found)
-        {
-            send_error(client_socket, ERR_NOSUCHNICK);
-        }
+    }
+    if (!found)
+    {
+        send_error(client_socket, ERR_NOSUCHNICK_OR_NOSUCHCHANNEL);
     }
 }
 
-void remove_extra_spaces(char *str) {
+void remove_extra_spaces(char *str)
+{
     int i, j;
     int length = strlen(str);
-    int space_flag = 0;  // Flag to track if space was encountered
+    int space_flag = 0; // Flag to track if space was encountered
 
     // Iterate through the string
-    for (i = 0, j = 0; i < length; i++) {
+    for (i = 0, j = 0; i < length; i++)
+    {
         // Skip newline characters
-        if (str[i] == '\n') {
+        if (str[i] == '\n')
+        {
             continue;
         }
         // If current character is not whitespace or if space_flag is not set
-        if (!isspace((unsigned char)str[i]) || !space_flag) {
-            str[j++] = str[i];  // Copy the character to the new position
-            space_flag = isspace((unsigned char)str[i]);  // Update space_flag
+        if (!isspace((unsigned char)str[i]) || !space_flag)
+        {
+            str[j++] = str[i];                           // Copy the character to the new position
+            space_flag = isspace((unsigned char)str[i]); // Update space_flag
         }
     }
-    str[j] = '\0';  // Null-terminate the modified string
+    str[j] = '\0'; // Null-terminate the modified string
+}
+
+void handle_time_command(int client_socket)
+{
+    char response[BUFFER_SIZE];
+    time_t now;
+    struct tm *local_time;
+
+    time(&now);
+    local_time = localtime(&now);
+
+    // No target specified or target is this server, send the local time
+    strftime(response, BUFFER_SIZE, ":%s 391 :Local time is %H:%M:%S\n", local_time);
+    send(client_socket, response, strlen(response), 0);
 }
