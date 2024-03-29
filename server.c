@@ -8,7 +8,7 @@
 #include <time.h>
 #include <asm-generic/socket.h>
 
-#define PORT 8080
+#define PORT 8888
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 25
 #define MAX_CHANNELS 25
@@ -336,12 +336,28 @@ void handle_nick_command(int client_socket, const char *nickname)
 
     if (!nick_in_use)
     {
-        strncpy(user_info[client_socket].nickname, nickname, MAX_NICK_LENGTH - 1);
-        user_info[client_socket].nickname[MAX_NICK_LENGTH - 1] = '\0';
-        printf("Client %d set nickname to %s\n", client_socket, user_info[client_socket].nickname);
+        // iterste in a for loop and find where the socket for nick is in the array and store the nickname at that index
+        int index;
+        for (index = 0; index < MAX_CLIENTS; index++)
+        {
+            if (user_info[index].client_socket == client_socket)
+            {
+                // Match found, copy the nickname and break out of the loop
+                strncpy(user_info[index].nickname, nickname, MAX_NICK_LENGTH - 1);
+                user_info[index].nickname[MAX_NICK_LENGTH - 1] = '\0'; // Ensure null-termination
+                break;
+            }
+        }
+
+        if (index == MAX_CLIENTS)
+        {
+            // Handle case when client_socket is not found in the array
+            printf("Client socket not found in the array.\n");
+        }
+        printf("Client %d set nickname to %s\n", client_socket, user_info[index].nickname);
         // Send RPL_NICK
         char reply_msg[BUFFER_SIZE];
-        snprintf(reply_msg, BUFFER_SIZE, ":%s 401 %s %s :Nickname is now %s\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname, user_info[client_socket].nickname);
+        snprintf(reply_msg, BUFFER_SIZE, ":%s 401 %s %s :Nickname is now %s\n", SERVER_IP, user_info[index].nickname, user_info[index].nickname, user_info[index].nickname);
         write(client_socket, reply_msg, strlen(reply_msg));
     }
     else
@@ -355,25 +371,42 @@ void handle_nick_command(int client_socket, const char *nickname)
 
 void handle_user_command(int client_socket, const char *nickname, const char *realname)
 {
-    // Check if user is already registered
-    if (strlen(user_info[client_socket].nickname) > 0)
+
+    int i;
+    for (i = 0; i < MAX_CLIENTS; i++)
     {
-        // Send ERR_ALREADYREGISTRED
-        char err_msg[BUFFER_SIZE];
-        snprintf(err_msg, BUFFER_SIZE, ":%s 462 %s %s :You may not reregister\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname);
-        write(client_socket, err_msg, strlen(err_msg));
-        return;
+        if (user_info[i].client_socket == client_socket)
+        {
+            // Match found, check if nickname is already present or not
+            if (strlen(user_info[i].nickname) > 0)
+            {
+                // Send ERR_ALREADYREGISTRED
+                char err_msg[BUFFER_SIZE];
+                snprintf(err_msg, BUFFER_SIZE, ":%s 462 %s %s :You may not reregister\n", SERVER_IP, user_info[i].nickname, user_info[i].nickname);
+                write(client_socket, err_msg, strlen(err_msg));
+                return;
+            }
+            else
+            {
+                // Store user information
+                strncpy(user_info[i].nickname, nickname, MAX_NICK_LENGTH - 1);
+                user_info[i].nickname[MAX_NICK_LENGTH - 1] = '\0';
+                strncpy(user_info[i].realname, realname, BUFFER_SIZE - 1);
+                user_info[i].realname[BUFFER_SIZE - 1] = '\0';
+                break;
+            }
+        }
     }
 
-    // Store user information
-    strncpy(user_info[client_socket].nickname, nickname, MAX_NICK_LENGTH - 1);
-    user_info[client_socket].nickname[MAX_NICK_LENGTH - 1] = '\0';
-    strncpy(user_info[client_socket].realname, realname, BUFFER_SIZE - 1);
-    user_info[client_socket].realname[BUFFER_SIZE - 1] = '\0';
+    if (i == MAX_CLIENTS)
+    {
+        // Handle case when client_socket is not found in the array
+        printf("Client socket not found in the array.\n");
+    }
 
     // Send RPL_WELCOME
     char welcome_msg[BUFFER_SIZE];
-    snprintf(welcome_msg, BUFFER_SIZE, ":%s 001 %s :Welcome to the IRC network %s!%s@%s\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname, user_info[client_socket].nickname, SERVER_IP);
+    snprintf(welcome_msg, BUFFER_SIZE, ":%s 001 %s :Welcome to the IRC network %s!%s@%s\n", SERVER_IP, user_info[i].nickname, user_info[i].nickname, user_info[i].nickname, SERVER_IP);
     write(client_socket, welcome_msg, strlen(welcome_msg));
 }
 
@@ -429,12 +462,6 @@ void join_channel(int client_socket, const char *channelName)
             send(client_socket, response, strlen(response), 0);
         }
     }
-
-    // printf("-----\n");
-    // for(int i=0; i<MAX_CLIENTS; i++){
-    //     printf(user_info[i].client_socket,"\n");
-    // }
-    // printf("-----\n");
 }
 
 void part_channel(int client_socket, const char *channelName)
@@ -580,12 +607,6 @@ void list_names(int client_socket, const char *channelName)
 void handle_privmsg(int client_socket, const char *msgtarget, const char *message)
 {
     char response[BUFFER_SIZE];
-    printf("-----\n");
-    for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        printf(user_info[i].nickname, "  ", user_info[i].client_socket, "\n");
-    }
-    printf("-----\n");
 
     remove_extra_spaces(msgtarget);
 
@@ -610,7 +631,6 @@ void handle_privmsg(int client_socket, const char *msgtarget, const char *messag
 
         if (strcmp(channels[i].channelName, msgtarget) == 0)
         {
-            printf("here1");
             found = 1;
             // Broadcast message to all clients in the channel
             for (int j = 0; j < channels[i].clientCount; j++)
@@ -625,7 +645,7 @@ void handle_privmsg(int client_socket, const char *msgtarget, const char *messag
         }
     }
     // Private message to a user
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < MAX_CLIENTS; i++)
     {
         // printf("Checking nickname: %s\n", user_info[i].nickname);
         // printf("Target nickname: %s\n", msgtarget);
@@ -639,8 +659,9 @@ void handle_privmsg(int client_socket, const char *msgtarget, const char *messag
                 found = 1;
                 snprintf(response, BUFFER_SIZE, "From %s: %s\n", user_info[i].nickname, message);
                 // Send the private message using the client's socket descriptor
-                send(user_info[i].client_socket, response, strlen(response), 0);
-                printf(user_info[i].client_socket, "\n");
+                // send(user_info[i].client_socket, response, strlen(response), 0);
+
+                write(user_info[i].client_socket, response, strlen(response));
                 break;
             }
         }
