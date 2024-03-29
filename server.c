@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <ctype.h>
 #include <asm-generic/socket.h>
 
 #define PORT 8080
@@ -12,6 +13,75 @@
 #define MAX_CHANNELS 25
 #define CHANNEL_NAME_LEN 50
 #define MAX_NICK_LENGTH 20
+
+#define ERR_NEEDMOREPARAMS 101
+#define ERR_TOOMANYPARAMS 102
+#define ERR_CHANNELISFULL 103
+#define ERR_NOSUCHCHANNEL 104
+#define ERR_TOOMANYCHANNELS 105
+#define ERR_TOOMANYTARGETS 106
+#define ERR_UNAVAILRESOURCE 107
+#define ERR_NORECIPIENT 304
+#define ERR_NOTEXTTOSEND 306
+#define ERR_NOSUCHNICK 309
+
+#define ERR_NOTONCHANNEL 201
+
+#define ERR_TOOMANYMATCHES 301
+#define ERR_NOSUCHSERVER 302
+
+void send_error(int client_socket, int error_code)
+{
+    const char *error_message;
+    switch (error_code)
+    {
+    case ERR_NEEDMOREPARAMS:
+        error_message = "Error 101: Need more parameters";
+        break;
+    case ERR_TOOMANYPARAMS:
+        error_message = "Error 102: Too many parameters";
+        break;
+    case ERR_CHANNELISFULL:
+        error_message = "Error 103: Channel is full";
+        break;
+    case ERR_NOSUCHCHANNEL:
+        error_message = "Error 104: No such channel";
+        break;
+    case ERR_TOOMANYCHANNELS:
+        error_message = "Error 105: Too many channels";
+        break;
+    case ERR_TOOMANYTARGETS:
+        error_message = "Error 106: Too many targets";
+        break;
+    case ERR_UNAVAILRESOURCE:
+        error_message = "Error 107: Unavailable resource";
+        break;
+    case ERR_NOTONCHANNEL:
+        error_message = "Error 201: Not on channel";
+        break;
+    case ERR_TOOMANYMATCHES:
+        error_message = "Error 301: Too many matches";
+        break;
+    case ERR_NOSUCHSERVER:
+        error_message = "Error 302: No such server";
+        break;
+    case ERR_NORECIPIENT:
+        error_message = ":%s 411 :No recipient given (PRIVMSG)\n";
+        break;
+    case ERR_NOTEXTTOSEND:
+        error_message = ":%s 412 :No text to send\n";
+        break;
+    case ERR_NOSUCHNICK:
+        error_message = ":%s 401 :No such nick/channel\n";
+        break;
+
+    default:
+        error_message = "Unknown error";
+    }
+
+    send(client_socket, error_message, strlen(error_message), 0);
+    printf("Sent to client %d: %s\n", client_socket, error_message);
+}
 
 char SERVER_IP[] = "128.226.114.201";
 char nicknames[MAX_CLIENTS][MAX_NICK_LENGTH]; // Array to store nicknames
@@ -42,6 +112,8 @@ void join_channel(int client_socket, const char *channelName);
 void part_channel(int client_socket, const char *channelName);
 void set_or_get_topic(int client_socket, const char *channelName, const char *topic);
 void list_names(int client_socket, const char *channelName);
+void handle_privmsg(int client_socket, const char *msgtarget, const char *message);
+void remove_extra_spaces(char *str);
 
 int main()
 {
@@ -101,7 +173,7 @@ int main()
 void *handle_client(void *arg)
 {
     int client_socket = *(int *)arg;
-    // char buffer[BUFFER_SIZE] = {0};
+    char buffer[BUFFER_SIZE];
     char client_ip[INET_ADDRSTRLEN];
 
     // Get client's IP address
@@ -119,100 +191,109 @@ void *handle_client(void *arg)
 
     while (1)
     {
-        char buffer[BUFFER_SIZE] = {0};
-        // Read message from client
-        int read_bytes = read(client_socket, buffer, BUFFER_SIZE);
-        if (read_bytes > 0)
+        memset(buffer, 0, BUFFER_SIZE);
+        int read_bytes = read(client_socket, buffer, BUFFER_SIZE - 1);
+        if (read_bytes <= 0)
         {
-            printf("Received message from client: %s\n", buffer);
+            printf("Client %s disconnected.\n", client_ip);
+            break; // Exit the loop if client disconnected
+        }
 
-            // Simple command parsing
-            char *command = strtok(buffer, " ");
-            if (strcmp(command, "JOIN") == 0)
-            {
-                char *channelName = strtok(NULL, " ");
-                if (channelName)
-                {
-                    join_channel(client_socket, channelName);
-                }
-            }
-            else if (strcmp(command, "PART") == 0)
-            {
-                char *channelName = strtok(NULL, " ");
-                if (channelName)
-                {
-                    part_channel(client_socket, channelName);
-                }
-            }
-            else if (strcmp(command, "TOPIC") == 0)
-            {
-                char *channelName = strtok(NULL, " ");
-                char *topic = strtok(NULL, "");
-                if (channelName)
-                {
-                    set_or_get_topic(client_socket, channelName, topic);
-                }
-            }
-            else if (strcmp(command, "NAMES") == 0)
-            {
-                char *channelName = strtok(NULL, " ");
-                list_names(client_socket, channelName);
-            }
-            else if (strcmp(command, "TIME") == 0)
-            {
-                time_t current_time;
-                char time_str[BUFFER_SIZE];
-                time(&current_time);
-                strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&current_time));
+        printf("Received message from client: %s\n", buffer);
+        char *command = strtok(buffer, " ");
 
-                // Send local time to client
-                char reply_msg[BUFFER_SIZE];
-                snprintf(reply_msg, BUFFER_SIZE, ":%s 391 %s %s :%s\n", SERVER_IP, user_info[client_socket].nickname, user_info[client_socket].nickname, time_str);
-                write(client_socket, reply_msg, strlen(reply_msg));
-            }
-            else if (strcmp(command, "NICK") == 0)
+        if (!command)
+        {
+            continue;
+        }
+
+        if (strcmp(command, "JOIN") == 0)
+        {
+            char *channelName = strtok(NULL, " ");
+            if (channelName)
             {
-                char *nickname = strtok(NULL, " ");
-                if (nickname)
-                {
-                    handle_nick_command(client_socket, nickname);
-                }
-                else
-                {
-                    // Send ERR_NONICKNAMEGIVEN
-                    char err_msg[BUFFER_SIZE];
-                    snprintf(err_msg, BUFFER_SIZE, ":%s 431 * :No nickname given\n", SERVER_IP);
-                    write(client_socket, err_msg, strlen(err_msg));
-                }
+                join_channel(client_socket, channelName);
             }
-            else if (strcmp(command, "USER") == 0)
+            else
             {
-                char *nickname = strtok(NULL, " ");
-                char *mode = strtok(NULL, " ");
-                char *realname = strtok(NULL, "");
-                if (nickname && mode && realname)
-                {
-                    handle_user_command(client_socket, nickname, realname);
-                }
-                else
-                {
-                    // Send ERR_NEEDMOREPARAMS
-                    char err_msg[BUFFER_SIZE];
-                    snprintf(err_msg, BUFFER_SIZE, ":%s 461 * :Not enough parameters\n", SERVER_IP);
-                    write(client_socket, err_msg, strlen(err_msg));
-                }
-            }
-            else if (strcmp(command, "QUIT") == 0)
-            {
-                char bye_message[BUFFER_SIZE];
-                snprintf(bye_message, BUFFER_SIZE, "%s %s\n", "BYE", client_ip);
-                write(client_socket, bye_message, strlen(bye_message)); // Send BYE message to client
-                close(client_socket);
-                printf("Client %s disconnected.\n", client_ip);
-                pthread_exit(NULL); // Terminate the thread
+                send_error(client_socket, ERR_NEEDMOREPARAMS);
             }
         }
+        else if (strcmp(command, "PART") == 0)
+        {
+            char *channelName = strtok(NULL, " ");
+            if (channelName)
+            {
+                part_channel(client_socket, channelName);
+            }
+            else
+            {
+                send_error(client_socket, ERR_NEEDMOREPARAMS);
+            }
+        }
+        else if (strcmp(command, "TOPIC") == 0)
+        {
+            char *channelName = strtok(NULL, " ");
+            char *topic = strtok(NULL, "\r\n"); // Assuming the topic ends with CRLF
+            set_or_get_topic(client_socket, channelName, topic);
+        }
+        else if (strcmp(command, "NAMES") == 0)
+        {
+            char *channelName = strtok(NULL, " ");
+            list_names(client_socket, channelName);
+        }
+        else if (strcmp(command, "NICK") == 0)
+        {
+            char *nickname = strtok(NULL, " ");
+            if (nickname)
+            {
+                handle_nick_command(client_socket, nickname);
+            }
+            else
+            {
+                send_error(client_socket, ERR_NEEDMOREPARAMS);
+            }
+        }
+        else if (strcmp(command, "USER") == 0)
+        {
+            char *nickname = strtok(NULL, " ");
+            char *mode = strtok(NULL, " ");        // mode is not used in this simplified version
+            char *realname = strtok(NULL, "\r\n"); // Assuming the realname ends with CRLF
+            if (nickname && realname)
+            {
+                handle_user_command(client_socket, nickname, realname);
+            }
+            else
+            {
+                send_error(client_socket, ERR_NEEDMOREPARAMS);
+            }
+        }
+        else if (strcmp(command, "QUIT") == 0)
+        {
+            printf("Client %s quit.\n", client_ip);
+            break; // Exit the loop if client sends QUIT command
+        }
+        else if (strcmp(command, "PRIVMSG") == 0)
+        {
+            char *msgtarget = strtok(NULL, " ");
+            char *message = strtok(NULL, "\r\n"); // Assuming the message ends with CRLF
+            if (msgtarget && message)
+            {
+                handle_privmsg(client_socket, msgtarget, message);
+            }
+            else
+            {
+                send_error(client_socket, ERR_NORECIPIENT);
+            }
+        }
+        else
+        {
+            printf("Unknown command from client: %s\n", command);
+        }
     }
+
+    close(client_socket);
+    pthread_exit(NULL);
 }
 
 void handle_nick_command(int client_socket, const char *nickname)
@@ -273,30 +354,37 @@ void handle_user_command(int client_socket, const char *nickname, const char *re
 
 void join_channel(int client_socket, const char *channelName)
 {
-    printf("Client %d attempting to join channel %s\n", client_socket, channelName);
+    char response[BUFFER_SIZE];
 
-    // Check if channel already exists
+    if (channelName == NULL || strlen(channelName) == 0)
+    {
+        snprintf(response, BUFFER_SIZE, "Error: No channel name provided.\n");
+        send(client_socket, response, strlen(response), 0);
+        return;
+    }
+
+    printf("Client %d attempting to join channel %s\n", client_socket, channelName);
     int found = 0;
     for (int i = 0; i < channelCount; i++)
     {
         if (strcmp(channels[i].channelName, channelName) == 0)
         {
-            // Add client to existing channel
             if (channels[i].clientCount < MAX_CLIENTS)
             {
                 channels[i].clients[channels[i].clientCount++] = client_socket;
-                printf("Client %d joined channel %s\n", client_socket, channelName);
+                snprintf(response, BUFFER_SIZE, "Client %d joined channel %s\n", client_socket, channelName);
+                send(client_socket, response, strlen(response), 0);
             }
             else
             {
-                printf("Channel %s is full.\n", channelName);
+                snprintf(response, BUFFER_SIZE, "Channel %s is full.\n", channelName);
+                send(client_socket, response, strlen(response), 0);
             }
             found = 1;
             break;
         }
     }
 
-    // If channel does not exist, create a new one
     if (!found)
     {
         if (channelCount < MAX_CHANNELS)
@@ -307,25 +395,36 @@ void join_channel(int client_socket, const char *channelName)
             newChannel.clients[0] = client_socket;
             newChannel.clientCount = 1;
             channels[channelCount++] = newChannel;
-            printf("Channel %s created and client %d joined.\n", channelName, client_socket);
+            snprintf(response, BUFFER_SIZE, "Channel %s created and client %d joined.\n", channelName, client_socket);
+            send(client_socket, response, strlen(response), 0);
         }
         else
         {
-            printf("Maximum number of channels reached.\n");
+            snprintf(response, BUFFER_SIZE, "Maximum number of channels reached.\n");
+            send(client_socket, response, strlen(response), 0);
         }
     }
 }
 
 void part_channel(int client_socket, const char *channelName)
 {
-    printf("Client %d attempting to leave channel %s\n", client_socket, channelName);
 
+    char response[BUFFER_SIZE];
+
+    if (channelName == NULL || strlen(channelName) == 0)
+    {
+        snprintf(response, BUFFER_SIZE, "Error: No channel name provided.\n");
+        send(client_socket, response, strlen(response), 0);
+        return;
+    }
+
+    printf("Client %d attempting to leave channel %s\n", client_socket, channelName);
+    int found = 0;
     for (int i = 0; i < channelCount; i++)
     {
         if (strcmp(channels[i].channelName, channelName) == 0)
         {
-            // Remove client from the channel
-            int found = 0;
+            int clientFound = 0;
             for (int j = 0; j < channels[i].clientCount; j++)
             {
                 if (channels[i].clients[j] == client_socket)
@@ -335,97 +434,105 @@ void part_channel(int client_socket, const char *channelName)
                         channels[i].clients[k] = channels[i].clients[k + 1];
                     }
                     channels[i].clientCount--;
-                    printf("Client %d left channel %s\n", client_socket, channelName);
-                    found = 1;
+                    snprintf(response, BUFFER_SIZE, "Client %d left channel %s\n", client_socket, channelName);
+                    send(client_socket, response, strlen(response), 0);
+                    clientFound = 1;
                     break;
                 }
             }
-            if (!found)
+            if (!clientFound)
             {
-                printf("Client %d is not in channel %s\n", client_socket, channelName);
+                snprintf(response, BUFFER_SIZE, "Client %d is not in channel %s\n", client_socket, channelName);
+                send(client_socket, response, strlen(response), 0);
             }
-            break;
-        }
-    }
-}
-
-void set_or_get_topic(int client_socket, const char *channelName, const char *topic)
-{
-    int found = 0;
-    for (int i = 0; i < channelCount; i++)
-    {
-        if (strcmp(channels[i].channelName, channelName) == 0)
-        {
             found = 1;
-            if (topic == NULL)
-            {
-                // Get topic
-                if (strlen(channels[i].topic) > 0)
-                {
-                    printf("Topic for %s is %s\n", channelName, channels[i].topic);
-                    // send client_socket RPL_TOPIC with channels[i].topic
-                }
-                else
-                {
-                    printf("No topic is set for %s\n", channelName);
-                    // send client_socket RPL_NOTOPIC
-                }
-            }
-            else
-            {
-                // Set or remove topic
-                if (strlen(topic) > 0)
-                {
-                    strncpy(channels[i].topic, topic, sizeof(channels[i].topic));
-                    channels[i].topic[sizeof(channels[i].topic) - 1] = '\0';
-                    printf("Topic for %s set to %s\n", channelName, topic);
-                }
-                else
-                {
-                    memset(channels[i].topic, 0, sizeof(channels[i].topic));
-                    printf("Topic for %s has been removed\n", channelName);
-                }
-            }
             break;
         }
     }
 
     if (!found)
     {
-        printf("Channel %s not found\n", channelName);
-        // send client_socket ERR_NOSUCHCHANNEL
+        snprintf(response, BUFFER_SIZE, "No such channel: %s\n", channelName);
+        send(client_socket, response, strlen(response), 0);
+    }
+}
+
+void set_or_get_topic(int client_socket, const char *channelName, const char *topic)
+{
+    char response[BUFFER_SIZE];
+
+
+    int found = 0;
+    for (int i = 0; i < channelCount; i++)
+    {
+        printf(channels[i].channelName);
+        printf(channelName);
+
+        remove_extra_spaces(channels[i].channelName);
+        remove_extra_spaces(channelName);
+        if (strcmp(channels[i].channelName, channelName) == 0)
+        {
+            found = 1;
+
+            if (topic == NULL)
+            {
+                if (strlen(channels[i].topic) > 0)
+                {
+                    snprintf(response, BUFFER_SIZE, "Topic for %s is %s\n", channelName, channels[i].topic);
+                }
+                else
+                {
+                    snprintf(response, BUFFER_SIZE, "No topic is set for %s\n", channelName);
+                }
+            }
+            else
+            {
+                strncpy(channels[i].topic, topic, sizeof(channels[i].topic) - 1);
+                channels[i].topic[sizeof(channels[i].topic) - 1] = '\0';
+                snprintf(response, BUFFER_SIZE, "Topic for %s set to %s\n", channelName, topic);
+            }
+            send(client_socket, response, strlen(response), 0);
+            return;
+        }
+    }
+
+    printf("here1");
+    if (!found)
+    {
+        printf("here2");
+        send_error(client_socket, ERR_NOSUCHCHANNEL);
     }
 }
 
 void list_names(int client_socket, const char *channelName)
 {
+    char response[BUFFER_SIZE * MAX_CLIENTS]; // Make sure this buffer is large enough
+
     int found = 0;
     if (channelName == NULL)
     {
-        // List all channels and names
+        strcpy(response, "Listing all channels and users:\n");
         for (int i = 0; i < channelCount; i++)
         {
-            printf("Channel: %s\n", channels[i].channelName);
+            snprintf(response + strlen(response), BUFFER_SIZE - strlen(response), "Channel: %s\n", channels[i].channelName);
             for (int j = 0; j < channels[i].clientCount; j++)
             {
-                printf("User: %d\n", channels[i].clients[j]);
-                // send client_socket with names
+                snprintf(response + strlen(response), BUFFER_SIZE - strlen(response), "User: %d\n", channels[i].clients[j]);
             }
         }
+        send(client_socket, response, strlen(response), 0);
     }
     else
     {
-        // List names for the specific channel
         for (int i = 0; i < channelCount; i++)
         {
             if (strcmp(channels[i].channelName, channelName) == 0)
             {
                 found = 1;
-                printf("Channel: %s\n", channels[i].channelName);
+                snprintf(response, BUFFER_SIZE, "Channel: %s\n", channels[i].channelName);
                 for (int j = 0; j < channels[i].clientCount; j++)
                 {
-                    printf("User: %d\n", channels[i].clients[j]);
-                    // send client_socket with names
+                    snprintf(response + strlen(response), BUFFER_SIZE - strlen(response), "User: %d\n", channels[i].clients[j]);
                 }
                 break;
             }
@@ -433,8 +540,93 @@ void list_names(int client_socket, const char *channelName)
 
         if (!found)
         {
-            printf("Channel %s not found\n", channelName);
-            // send client_socket ERR_NOSUCHCHANNEL
+            send_error(client_socket, ERR_NOSUCHCHANNEL);
+        }
+        else
+        {
+            send(client_socket, response, strlen(response), 0);
         }
     }
+}
+
+void handle_privmsg(int client_socket, const char *msgtarget, const char *message)
+{
+    char response[BUFFER_SIZE];
+
+    if (!msgtarget || !message)
+    {
+        send_error(client_socket, ERR_NORECIPIENT);
+        return;
+    }
+
+    if (strlen(message) == 0)
+    {
+        send_error(client_socket, ERR_NOTEXTTOSEND);
+        return;
+    }
+
+    // Assume msgtarget can be a nickname or channel
+    if (msgtarget[0] == '#')
+    { // Channel message
+        int found = 0;
+        for (int i = 0; i < channelCount; i++)
+        {
+            if (strcmp(channels[i].channelName, msgtarget) == 0)
+            {
+                found = 1;
+                // Broadcast message to all clients in the channel
+                for (int j = 0; j < channels[i].clientCount; j++)
+                {
+                    if (channels[i].clients[j] != client_socket)
+                    {
+                        snprintf(response, BUFFER_SIZE, "%s: %s\n", msgtarget, message);
+                        send(channels[i].clients[j], response, strlen(response), 0);
+                    }
+                }
+                break;
+            }
+        }
+        if (!found)
+        {
+            send_error(client_socket, ERR_NOSUCHNICK);
+        }
+    }
+    else
+    { // Private message to a user
+        int found = 0;
+        for (int i = 0; i < MAX_CLIENTS; i++)
+        {
+            if (strcmp(user_info[i].nickname, msgtarget) == 0)
+            {
+                found = 1;
+                snprintf(response, BUFFER_SIZE, "From %s: %s\n", user_info[client_socket].nickname, message);
+                send(i, response, strlen(response), 0);
+                break;
+            }
+        }
+        if (!found)
+        {
+            send_error(client_socket, ERR_NOSUCHNICK);
+        }
+    }
+}
+
+void remove_extra_spaces(char *str) {
+    int i, j;
+    int length = strlen(str);
+    int space_flag = 0;  // Flag to track if space was encountered
+
+    // Iterate through the string
+    for (i = 0, j = 0; i < length; i++) {
+        // Skip newline characters
+        if (str[i] == '\n') {
+            continue;
+        }
+        // If current character is not whitespace or if space_flag is not set
+        if (!isspace((unsigned char)str[i]) || !space_flag) {
+            str[j++] = str[i];  // Copy the character to the new position
+            space_flag = isspace((unsigned char)str[i]);  // Update space_flag
+        }
+    }
+    str[j] = '\0';  // Null-terminate the modified string
 }
