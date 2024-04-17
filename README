@@ -35,3 +35,6 @@ gcc -Wall client.c -o client
 
 This README provides a basic guide to what each file in the project is for, how to compile the programs using the Makefile, and how to run the server and client manually.
 
+
+# Starting PRJ02
+
