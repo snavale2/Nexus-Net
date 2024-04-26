@@ -35,12 +35,11 @@
 #define RPL_TIME 391
 #define RPL_NOTOPIC 393
 
-#define S2S_PORT 4545
-#define MAX_SERVERS 1
+#define MAX_SERVERS 2
 
 // Server IP and client/server ports
-#define CLIENT_PORT 8080
-int SERVER_PORTS[MAX_SERVERS] = { 9090, 9091, 9092 }; // Example server ports
+#define CLIENT_PORT 9090
+int SERVER_PORTS[MAX_SERVERS] = { 8080, 9091, 9092 }; // Example server ports
 
 char NICK[BUFFER_SIZE]; // Declare NICK as a global variable
 int PORT; // Declare PORT as a global variable
@@ -281,7 +280,7 @@ void *handle_server(void *arg) {
 
     // Attempt to connect to the remote server
     while (connect(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-        perror("Server connection failed, retrying...");
+        //perror("Server connection failed, retrying...");
         sleep(1);  // Wait for 1 second before retrying
     }
 

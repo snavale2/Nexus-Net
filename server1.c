@@ -35,8 +35,7 @@
 #define RPL_TIME 391
 #define RPL_NOTOPIC 393
 
-#define S2S_PORT 4545
-#define MAX_SERVERS 1
+#define MAX_SERVERS 2
 
 // Server IP and client/server ports
 #define CLIENT_PORT 8080
@@ -281,7 +280,7 @@ void *handle_server(void *arg) {
 
     // Attempt to connect to the remote server
     while (connect(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-        perror("Server connection failed, retrying...");
+        //perror("Server connection failed, retrying...");
         sleep(1);  // Wait for 1 second before retrying
     }
 
