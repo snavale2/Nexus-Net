@@ -35,11 +35,11 @@
 #define RPL_TIME 391
 #define RPL_NOTOPIC 393
 
-#define MAX_SERVERS 2
+#define MAX_CONNECTED_SERVERS 5
 
 // Server IP and client/server ports
 #define CLIENT_PORT 8080
-int SERVER_PORTS[MAX_SERVERS] = { 9090, 9091, 9092 }; // Example server ports
+int SERVER_PORTS[MAX_CONNECTED_SERVERS] = { 9090, 9091, 9092 }; // Example server ports
 
 char NICK[BUFFER_SIZE]; // Declare NICK as a global variable
 int PORT; // Declare PORT as a global variable
@@ -120,10 +120,8 @@ typedef struct
 
 
 typedef struct {
-    char nick[MAX_NICK_LENGTH];
-    char pass[BUFFER_SIZE];
-    int port;
-    int serverCount;
+    char ip_address[16];
+    int server_port;
 } ConnectedServerInfo;
 
 Channel channels[MAX_CHANNELS];
@@ -131,7 +129,7 @@ int channelCount = 0;
 
 void *handle_server(void *arg);
 void *receive_messages(void *arg);
-
+void print_server_info(ConnectedServerInfo connected_servers[], int noOfServers);
 void *handle_client(void *arg);
 void handle_nick_command(int client_socket, const char *nickname);
 void handle_user_command(int client_socket, const char *nickname, const char *realname);
@@ -142,13 +140,14 @@ void list_names(int client_socket, const char *channelName);
 void handle_privmsg(int client_socket, const char *msgtarget, const char *message);
 void remove_extra_spaces(char *str);
 void handle_time_command(int client_socket);
-void read_server_config(const char *filename);
+void read_config(const char *config_file, char *server_nick, int *port, int *noOfServers, ConnectedServerInfo connected_servers[]);
 
-void read_config(char *server_ip, int *port) {
+void read_config(const char *config_file, char *server_nick, int *port, int *noOfServers, ConnectedServerInfo connected_servers[]) {
     FILE *fp;
     char line[100];
+    int server_count = 0;
 
-    fp = fopen(CONFIG_FILE, "r");
+    fp = fopen(config_file, "r");
     if (fp == NULL) {
         perror("Error opening configuration file");
         exit(EXIT_FAILURE);
@@ -166,22 +165,59 @@ void read_config(char *server_ip, int *port) {
         value[strcspn(value, "\n")] = '\0';
 
         if (strcmp(key, "NICK") == 0) {
-            strcpy(server_ip, value);
+            strcpy(server_nick, value);
         } else if (strcmp(key, "PORT") == 0) {
             *port = atoi(value);
+        } else if (strcmp(key, "SERVERS") == 0) {
+            *noOfServers = atoi(value);
+        } else if (strcmp(key, "SOCK_ADDR") == 0 && server_count < MAX_CONNECTED_SERVERS) {
+            char *ip_port = strtok(value, ":");
+            char *port_str = strtok(NULL, ":");
+
+            if (ip_port != NULL && port_str != NULL) {
+                strcpy(connected_servers[server_count].ip_address, ip_port);
+                connected_servers[server_count].server_port = atoi(port_str);
+                server_count++;
+            }
         }
     }
 
     fclose(fp);
 }
 
-int main()
-{
+void print_server_info(ConnectedServerInfo connected_servers[], int noOfServers) {
+    printf("Connected Servers:\n");
+    for (int i = 0; i < noOfServers; i++) {
+        printf("Server %d: IP Address: %s, Port: %d\n", i + 1, connected_servers[i].ip_address, connected_servers[i].server_port);
+    }
+}
+
+
+int main(int argc, char *argv[])
+{  
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <config_file>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    char sever_nick[BUFFER_SIZE];
+    int client_port, noOfServers = 1;
     int server_fd, client_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
-    pthread_t client_thread, server_threads[MAX_SERVERS];
+    pthread_t client_thread, server_threads[MAX_CONNECTED_SERVERS];
     int opt = 1;
+    ConnectedServerInfo connected_servers[noOfServers];
+
+    
+    read_config(argv[1], sever_nick, &client_port, &noOfServers, connected_servers);
+
+    printf("Server IP: %s\n", sever_nick);
+    printf("Port: %d\n", client_port);
+    printf("Number of Servers: %d\n", noOfServers);
+
+    print_server_info(connected_servers, noOfServers);
 
     // Create server socket for clients
     // Creating socket file descriptor
@@ -214,7 +250,7 @@ int main()
     }
 
     // Create threads to handle server-to-server communication
-    for (int i = 0; i < MAX_SERVERS; i++) {
+    for (int i = 0; i < MAX_CONNECTED_SERVERS; i++) {
         int *server_port = malloc(sizeof(int));
         *server_port = SERVER_PORTS[i];
         if (pthread_create(&server_threads[i], NULL, handle_server, (void *)server_port) != 0) {
