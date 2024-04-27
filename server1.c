@@ -35,7 +35,7 @@
 #define RPL_TIME 391
 #define RPL_NOTOPIC 393
 
-#define MAX_CONNECTED_SERVERS 5
+#define MAX_CONNECTED_SERVERS 10
 
 // Server IP and client/server ports
 #define CLIENT_PORT 8080
@@ -100,11 +100,18 @@ void send_error(int client_socket, int error_code)
 
 char nicknames[MAX_CLIENTS][MAX_NICK_LENGTH]; // Array to store nicknames
 
-typedef struct
-{
+
+typedef struct {
     char nickname[MAX_NICK_LENGTH];
     char realname[BUFFER_SIZE];
     int client_socket;
+    char password[BUFFER_SIZE]; // Using 'password' for another purpose could be confusing.
+    int hopcount;
+    char username[BUFFER_SIZE];
+    char host[BUFFER_SIZE];
+    int servertoken;
+    char umode[BUFFER_SIZE];
+    struct sockaddr_in address; // Storing the IP address and port
 } UserInfo;
 
 UserInfo user_info[MAX_CLIENTS]; // Array to store user information
@@ -119,17 +126,35 @@ typedef struct
 } Channel;
 
 
+// typedef struct {
+//     char ip_address[16];
+//     int server_port;
+// } ConnectedServerInfo;
+
 typedef struct {
-    char ip_address[16];
+    char nick[MAX_NICK_LENGTH];
+    char pass[BUFFER_SIZE];
+    int client_port;
+    int serverCount;
+    struct {
+        char ip[INET_ADDRSTRLEN];
+        int server_port;
+    } sockAddr[MAX_SOCKET_ADDRESSES];
+} ServerInfo;
+
+typedef struct {
+    char ip[INET_ADDRSTRLEN];
     int server_port;
-} ConnectedServerInfo;
+} ServerAddress;
 
 Channel channels[MAX_CHANNELS];
 int channelCount = 0;
+ServerInfo serverConfig[MAX_CONNECTED_SERVERS];
+UserInfo user_info[MAX_CLIENTS];
 
 void *handle_server(void *arg);
 void *receive_messages(void *arg);
-void print_server_info(ConnectedServerInfo connected_servers[], int noOfServers);
+//void print_server_info(ConnectedServerInfo connected_servers[], int noOfServers);
 void *handle_client(void *arg);
 void handle_nick_command(int client_socket, const char *nickname);
 void handle_user_command(int client_socket, const char *nickname, const char *realname);
@@ -140,9 +165,17 @@ void list_names(int client_socket, const char *channelName);
 void handle_privmsg(int client_socket, const char *msgtarget, const char *message);
 void remove_extra_spaces(char *str);
 void handle_time_command(int client_socket);
-void read_config(const char *config_file, char *server_nick, int *port, int *noOfServers, ConnectedServerInfo connected_servers[]);
+//void read_config(const char *config_file, char *server_nick, int *port, int *noOfServers, ConnectedServerInfo connected_servers[]);
+void read_config(const char *config_file, ServerInfo *server_info);
 
-void read_config(const char *config_file, char *server_nick, int *port, int *noOfServers, ConnectedServerInfo connected_servers[]) {
+//S2S
+void handle_server_nick(int client_socket, char *params[], int num_params);
+void handle_server_pass(int client_socket, char *params[], int num_params);
+void handle_server_squit(int client_socket, char *params[], int num_params);
+void handle_server_njoin(int client_socket, char *params[], int num_params);
+
+
+void read_config(const char *config_file, ServerInfo *server_info) {
     FILE *fp;
     char line[100];
     int server_count = 0;
@@ -161,22 +194,23 @@ void read_config(const char *config_file, char *server_nick, int *port, int *noO
             continue;
         }
 
-        // Remove trailing newline character
-        value[strcspn(value, "\n")] = '\0';
+        value[strcspn(value, "\n")] = '\0'; // Remove trailing newline character
 
         if (strcmp(key, "NICK") == 0) {
-            strcpy(server_nick, value);
+            strcpy(server_info->nick, value);
+        } else if (strcmp(key, "PASS") == 0) {
+            strcpy(server_info->pass, value);
         } else if (strcmp(key, "PORT") == 0) {
-            *port = atoi(value);
+            server_info->client_port = atoi(value);
         } else if (strcmp(key, "SERVERS") == 0) {
-            *noOfServers = atoi(value);
-        } else if (strcmp(key, "SOCK_ADDR") == 0 && server_count < MAX_CONNECTED_SERVERS) {
+            server_info->serverCount = atoi(value);
+        } else if (strcmp(key, "SOCK_ADDR") == 0 && server_count < MAX_SOCKET_ADDRESSES) {
             char *ip_port = strtok(value, ":");
             char *port_str = strtok(NULL, ":");
 
             if (ip_port != NULL && port_str != NULL) {
-                strcpy(connected_servers[server_count].ip_address, ip_port);
-                connected_servers[server_count].server_port = atoi(port_str);
+                strcpy(server_info->sockAddr[server_count].ip, ip_port);
+                server_info->sockAddr[server_count].server_port = atoi(port_str);
                 server_count++;
             }
         }
@@ -185,12 +219,12 @@ void read_config(const char *config_file, char *server_nick, int *port, int *noO
     fclose(fp);
 }
 
-void print_server_info(ConnectedServerInfo connected_servers[], int noOfServers) {
-    printf("Connected Servers:\n");
-    for (int i = 0; i < noOfServers; i++) {
-        printf("Server %d: IP Address: %s, Port: %d\n", i + 1, connected_servers[i].ip_address, connected_servers[i].server_port);
-    }
-}
+// void print_server_info(ConnectedServerInfo connected_servers[], int noOfServers) {
+//     printf("Connected Servers:\n");
+//     for (int i = 0; i < noOfServers; i++) {
+//         printf("Server %d: IP Address: %s, Port: %d\n", i + 1, connected_servers[i].ip_address, connected_servers[i].server_port);
+//     }
+// }
 
 
 int main(int argc, char *argv[])
@@ -201,23 +235,23 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    char sever_nick[BUFFER_SIZE];
-    int client_port, noOfServers = 1;
+    // char sever_nick[BUFFER_SIZE];
+    // int client_port, noOfServers = 1;
     int server_fd, client_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
     pthread_t client_thread, server_threads[MAX_CONNECTED_SERVERS];
     int opt = 1;
-    ConnectedServerInfo connected_servers[noOfServers];
+    // ConnectedServerInfo connected_servers[noOfServers];
 
-    
-    read_config(argv[1], sever_nick, &client_port, &noOfServers, connected_servers);
+    ServerInfo server_info;
+    read_config(argv[1], &server_info);
 
-    printf("Server IP: %s\n", sever_nick);
-    printf("Port: %d\n", client_port);
-    printf("Number of Servers: %d\n", noOfServers);
+    // printf("Server IP: %s\n", sever_nick);
+    // printf("Port: %d\n", client_port);
+    // printf("Number of Servers: %d\n", noOfServers);
 
-    print_server_info(connected_servers, noOfServers);
+    // print_server_info(connected_servers, noOfServers);
 
     // Create server socket for clients
     // Creating socket file descriptor
@@ -235,7 +269,7 @@ int main(int argc, char *argv[])
     }
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(CLIENT_PORT);
+    server_addr.sin_port = htons(server_info.client_port);
 
     // Bind server socket to the client port
     if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
@@ -249,11 +283,17 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // Create threads to handle server-to-server communication
-    for (int i = 0; i < MAX_CONNECTED_SERVERS; i++) {
-        int *server_port = malloc(sizeof(int));
-        *server_port = SERVER_PORTS[i];
-        if (pthread_create(&server_threads[i], NULL, handle_server, (void *)server_port) != 0) {
+
+    for (int i = 0; i < server_info.serverCount; i++) {
+        ServerAddress *server_address = malloc(sizeof(ServerAddress));
+        if (server_address == NULL) {
+            perror("Memory allocation failed");
+            exit(EXIT_FAILURE);
+        }
+        snprintf(server_address->ip, INET_ADDRSTRLEN, "%s", server_info.sockAddr[i].ip);
+        server_address->server_port = server_info.sockAddr[i].server_port;
+
+        if (pthread_create(&server_threads[i], NULL, handle_server, (void *)server_address) != 0) {
             perror("Server thread creation failed");
             exit(EXIT_FAILURE);
         }
@@ -293,6 +333,7 @@ int main(int argc, char *argv[])
 
 void *handle_server(void *arg) {
     char message[BUFFER_SIZE];
+    ServerAddress *server_address = (ServerAddress *)arg;
     int server_port = *((int *)arg);
     int server_fd;
     struct sockaddr_in server_addr;
@@ -306,9 +347,9 @@ void *handle_server(void *arg) {
 
     // Set up server address structure for server-to-server communication
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(server_port);
+    server_addr.sin_port = htons(server_address->server_port);
 
-    if (inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr) <= 0) {   // here SERVER_IP is ip address of another server which will act as server for this server(here act as client)
+    if (inet_pton(AF_INET, server_address->ip, &server_addr.sin_addr) <= 0) {   // here SERVER_IP is ip address of another server which will act as server for this server(here act as client)
         perror("Invalid address/ Address not supported");
         return -1;
     }
@@ -321,7 +362,7 @@ void *handle_server(void *arg) {
     }
 
     // Debug message indicating successful connection
-    printf("Server-to-server connection established on port %d\n", server_port);
+    printf("Server-to-server connection established on port %d\n", server_address->server_port);
 
     // Handle server-to-server communication here i.e we will write server-server commands here(yet to confirm)
 
@@ -330,7 +371,7 @@ void *handle_server(void *arg) {
     pthread_create(&recv_thread, NULL, receive_messages, (void *)&server_fd);
 
     while (1) {
-        printf("Enter message (type 'QUIT' to exit):\n");
+        //printf("Enter message (type 'QUIT' to exit):\n");
         fgets(message, BUFFER_SIZE, stdin);
 
         // Send message to server
@@ -368,6 +409,7 @@ void *handle_client(void *arg)
     int client_socket = *(int *)arg;
     char buffer[BUFFER_SIZE];
     char client_ip[INET_ADDRSTRLEN];
+    char *params[10]; // Array to hold command and parameters
 
     // Get client's IP address
     struct sockaddr_in client_addr;
@@ -393,7 +435,20 @@ void *handle_client(void *arg)
         }
 
         printf("Received message from client: %s\n", buffer);
-        char *command = strtok(buffer, " ");
+        int num_params = 0;
+        char *token = strtok(buffer, " \r\n");
+        while (token != NULL && num_params < 10) {
+            params[num_params++] = token;
+            token = strtok(NULL, " \r\n");
+        }
+
+        // for (int i = 0; i < 10; i++) {
+        //     printf("params[%d]: %s\n", i, params[i]);
+        // }
+
+        if (num_params == 0) continue;
+
+        char *command = params[0];
 
         if (!command)
         {
@@ -402,10 +457,22 @@ void *handle_client(void *arg)
 
         if (strcmp(command, "JOIN") == 0)
         {
-            char *channelName = strtok(NULL, " ");
+            char *channelName = params[1];
             if (channelName)
             {
                 join_channel(client_socket, channelName);
+            }
+            else
+            {
+                send_error(client_socket, ERR_NEEDMOREPARAMS);
+            }
+        }
+        else if (strcmp(command, "NJOIN") == 0)
+        {
+            char *channelName = params[1];
+            if (channelName)
+            {
+                handle_server_njoin(client_socket, params, num_params);
             }
             else
             {
@@ -430,20 +497,27 @@ void *handle_client(void *arg)
             char *topic = strtok(NULL, "\r\n"); // Assuming the topic ends with CRLF
             set_or_get_topic(client_socket, channelName, topic);
         }
+        else if (strcmp(command, "PASS") == 0) {
+              if (num_params == 2) {
+                handle_pass_command(client_socket, params[1]); // Old simple PASS command
+              } else if (num_params >= 3) {
+                handle_server_pass(client_socket, params, num_params); // New extended PASS command
+              } else {
+                send_error(client_socket, ERR_NEEDMOREPARAMS);
+            }
+        }
         else if (strcmp(command, "NAMES") == 0)
         {
             char *channelName = strtok(NULL, " ");
             list_names(client_socket, channelName);
         }
-        else if (strcmp(command, "NICK") == 0)
-        {
-            char *nickname = strtok(NULL, " ");
-            if (nickname)
-            {
-                handle_nick_command(client_socket, nickname);
-            }
-            else
-            {
+        else if (strcmp(command, "NICK") == 0) {
+                if (num_params == 2) {
+                  handle_nick_command(client_socket, params[1]); // Existing simple NICK command
+                } else if (num_params >= 4) {
+                  handle_server_nick(client_socket, params, num_params); // New extended NICK command
+            } 
+            else {
                 send_error(client_socket, ERR_NEEDMOREPARAMS);
             }
         }
@@ -495,6 +569,34 @@ void *handle_client(void *arg)
 
     close(client_socket);
     pthread_exit(NULL);
+}
+
+void handle_pass_command(int client_socket, const char *password) {
+    // Directly use the client_socket to find the user in the user_info array
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (user_info[i].client_socket == client_socket) {
+            // Store the password directly
+            strncpy(user_info[i].password, password, BUFFER_SIZE - 1);
+            user_info[i].password[BUFFER_SIZE - 1] = '\0';
+            printf("Password received and saved: %s\n", password);
+
+            // Save the password to the file
+            save_password_to_file(client_socket, password);
+            return;
+        }
+    }
+    printf("Error: Client socket %d not found in user_info array.\n", client_socket);
+}
+
+void save_password_to_file(int client_socket, const char *password) {
+    FILE *file = fopen(".usr_pass", "a");  // Open the file in append mode
+    if (file == NULL) {
+        perror("Failed to open password file");
+        return;
+    }
+    fprintf(file, "%d:%s\n", client_socket, password);
+    fclose(file);
+    printf("Password for socket %d saved successfully in .usr_pass file.\n", client_socket);
 }
 
 void handle_nick_command(int client_socket, const char *nickname)
@@ -937,4 +1039,160 @@ void handle_time_command(int client_socket)
     // No target specified or target is this server, send the local time
     strftime(response, BUFFER_SIZE, ":%s 391 :Local time is %H:%M:%S\n", local_time);
     send(client_socket, response, strlen(response), 0);
+}
+
+void handle_server_nick(int client_socket, char *params[], int num_params) {
+    if (num_params < 8) { // Ensure there are enough parameters
+        printf("Error: Not enough parameters for server NICK command.\n");
+        return;
+    }
+
+    UserInfo new_user;
+    new_user.client_socket = client_socket;
+    strncpy(new_user.nickname, params[1], MAX_NICK_LENGTH - 1);
+    new_user.nickname[MAX_NICK_LENGTH - 1] = '\0';
+    new_user.hopcount = atoi(params[2]);
+    strncpy(new_user.username, params[3], BUFFER_SIZE - 1);
+    new_user.username[BUFFER_SIZE - 1] = '\0';
+    strncpy(new_user.host, params[4], BUFFER_SIZE - 1);
+    new_user.host[BUFFER_SIZE - 1] = '\0';
+    new_user.servertoken = atoi(params[5]);
+    strncpy(new_user.umode, params[6], BUFFER_SIZE - 1);
+    new_user.umode[BUFFER_SIZE - 1] = '\0';
+    strncpy(new_user.realname, params[7], BUFFER_SIZE - 1);
+    new_user.realname[BUFFER_SIZE - 1] = '\0';
+
+    // Getting client's IP address
+    socklen_t addr_len = sizeof(new_user.address);
+    if (getpeername(client_socket, (struct sockaddr *)&new_user.address, &addr_len) == 0) {
+        char client_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &new_user.address.sin_addr, client_ip, INET_ADDRSTRLEN);
+        printf("Client IP: %s\n", client_ip);
+    } else {
+        printf("Error getting client IP\n");
+    }
+
+    printf("Handled server NICK command for %s\n", new_user.nickname);
+}
+
+
+// Need to correct this code
+void handle_server_pass(int client_socket, char *params[], int num_params) {
+    if (num_params != 5) {
+        printf("Error: PASS command requires exactly 4 parameter.\n");
+        return;
+    }
+
+    char *password = params[1];
+    int client_port = 0; // This will store the extracted port number from client_socket
+
+    // Assuming serverConfig is an array of ServerInfo
+    ServerInfo *server_info = NULL;
+
+    // Extract port from client_socket
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+    if (getpeername(client_socket, (struct sockaddr *)&addr, &addr_len) == 0) {
+        client_port = ntohs(addr.sin_port); // Get the port number
+    } else {
+        perror("Error getting client socket address");
+        return;
+    }
+
+    // Search for the server configuration that matches the extracted port
+    for (int i = 0; i < MAX_CONNECTED_SERVERS; i++) {
+        if (serverConfig[i].client_port == client_port) {
+            server_info = &serverConfig[i];
+            break;
+        }
+    }
+
+    if (server_info == NULL) {
+        printf("Error: Server configuration not found for client port %d.\n", client_port);
+        return;
+    }
+
+    // Check if the provided password matches the server password
+    if (strcmp(password, server_info->pass) == 0) {
+        printf("Password accepted for server %s.\n", server_info->nick);
+        // Proceed with connection registration
+        // This could include further client-server interaction setup
+    } else {
+        printf("Error: Invalid password for server %s.\n", server_info->nick);
+        // Optionally, you can terminate the connection or take other actions
+        // For security reasons, might want to delay response or limit attempts
+    }
+}
+
+
+// Giving but msg BYE but need to gracefully exit and terminate the code
+void handle_server_squit(int client_socket, char *params[], int num_params) {
+    if (num_params < 1 || num_params > 3) {
+        printf("Error: SQUIT command requires 1 or 2 parameters.\n");
+        return;
+    }
+
+    char *server_name = params[1];
+    char *comment = (num_params == 2) ? params[2] : "";
+
+    printf("Handling server SQUIT command\n");
+    printf("Server name: %s\n", server_name);
+    printf("Comment: %s\n", comment);
+
+    // Check if the server name is valid and the connection should be terminated
+    // (not shown here, but you would need to validate the server name)
+
+    // Broadcast the SQUIT message to other connected servers
+    broadcast_squit(server_name, comment);
+
+    // Implement the logic for terminating the connection to the specified server
+    // (not shown here, but you would need to remove the server from the list of connected servers and close the connection)
+
+    printf("Connection to server %s terminated.\n", server_name);
+    exit(0);
+}
+
+
+void handle_server_njoin(int client_socket, char *params[], int num_params) {
+    if (num_params != 2) {
+        printf("Error: NJOIN command requires exactly 1 parameter.\n");
+        return;
+    }
+
+    char *channel_name = params[1];
+
+    // Search for the channel in the channel list
+    Channel *channel = NULL;
+    for (int i = 0; i < channelCount; i++) {
+        if (strcmp(channels[i].channelName, channel_name) == 0) {
+            channel = &channels[i];
+            break;
+        }
+    }
+
+    // If the channel doesn't exist, create a new one
+    if (channel == NULL) {
+        if (channelCount >= MAX_CHANNELS) {
+            printf("Error: Maximum number of channels reached.\n");
+            return; 
+        }
+
+        channel = &channels[channelCount];
+        strncpy(channel->channelName, channel_name, CHANNEL_NAME_LEN - 1);
+        channel->channelName[CHANNEL_NAME_LEN - 1] = '\0'; // Null-terminate
+        channel->clientCount = 0;
+        strcpy(channel->topic, "");  // Set an empty topic initially
+        channelCount++;
+        printf("Created and joined channel '%s'.\n", channel_name);
+    } else {
+        // Join the existing channel
+        // Add client to the channel's clients array
+        printf("Joined channel '%s'.\n", channel_name);
+    }
+}
+
+void broadcast_squit(char *server_name, char *comment) {
+    // Broadcast the SQUIT message to all connected servers
+    // (not shown here, but you would need to iterate through a list of connected servers)
+    printf("Broadcasting SQUIT to all connected servers: %s %s\n", server_name, comment);
 }

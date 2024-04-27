@@ -213,11 +213,11 @@ int main(int argc, char *argv[])
     
     read_config(argv[1], sever_nick, &client_port, &noOfServers, connected_servers);
 
-    printf("Server IP: %s\n", sever_nick);
-    printf("Port: %d\n", client_port);
-    printf("Number of Servers: %d\n", noOfServers);
+    // printf("Server IP: %s\n", sever_nick);
+    // printf("Port: %d\n", client_port);
+    // printf("Number of Servers: %d\n", noOfServers);
 
-    print_server_info(connected_servers, noOfServers);
+    // print_server_info(connected_servers, noOfServers);
 
 
     // Create server socket for clients
@@ -236,7 +236,7 @@ int main(int argc, char *argv[])
     }
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(CLIENT_PORT);
+    server_addr.sin_port = htons(client_port);
 
     // Bind server socket to the client port
     if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
