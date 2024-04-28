@@ -10,7 +10,7 @@
 #include <asm-generic/socket.h>
 #define CONFIG_FILE "server.conf"
 
-#define BUFFER_SIZE 63
+#define BUFFER_SIZE 48
 #define MAX_CLIENTS 25
 #define MAX_CHANNELS 25
 #define CHANNEL_NAME_LEN 50
@@ -37,7 +37,6 @@
 #define RPL_NOTOPIC 393
 
 #define MAX_CONNECTED_SERVERS 10
-
 
 char NICK[BUFFER_SIZE]; // Declare NICK as a global variable
 int PORT;               // Declare PORT as a global variable
@@ -176,7 +175,7 @@ void handle_server_nick(int client_socket, char *params[], int num_params);
 void handle_server_pass(int client_socket, char *params[], int num_params);
 void handle_server_squit(int client_socket, char *params[], int num_params);
 void handle_server_njoin(int client_socket, char *params[], int num_params);
-void handle_server_privmsg(int client_socket, char *params[], int num_params);
+void handle_server_privmsg(char *params[], int num_params);
 
 void read_config(const char *config_file, ServerInfo *server_info)
 {
@@ -258,7 +257,6 @@ int main(int argc, char *argv[])
     int opt = 1;
     // ConnectedServerInfo connected_servers[noOfServers];
 
-    
     read_config(argv[1], &server_info);
 
     // Create server socket for clients
@@ -413,11 +411,75 @@ void *receive_messages(void *arg)
 
     while (1)
     {
-        valread = read(sock, buffer, BUFFER_SIZE);
-        if (valread > 0)
+        // valread = read(sock, buffer, BUFFER_SIZE);
+        // // Check if valread starts with PRIVMSG
+        // if (strncmp(valread, "PRIVMSG", strlen("PRIVMSG")) == 0)
+        // {
+        //     char *params[4]; // Array to hold command and parameters
+        //     int num_params = 0;
+
+        //     // Tokenize the valread buffer to extract parameters
+        //     char *token = strtok(valread, " ");
+        //     while (token != NULL && num_params < 4)
+        //     {
+        //         params[num_params++] = token;
+        //         token = strtok(NULL, " ");
+        //     }
+
+        //     // Check if num_params is correct for PRIVMSG command
+        //     if (num_params == 4)
+        //     {
+        //         // Call function to handle PRIVMSG command
+        //         handle_server_privmsg(params, num_params);
+        //     }
+        // }
+        // else if (valread > 0)
+        // {
+        //     buffer[valread] = '\0'; // Null-terminate the received data
+        //     printf("Server response: %s\n", buffer);
+        // }
+
+        char buffer[BUFFER_SIZE];
+        int read_bytes = read(sock, buffer, BUFFER_SIZE - 1);
+
+        // printf("Server response from another server: %s\n", buffer);
+
+        if (read_bytes > 0)
         {
-            buffer[valread] = '\0'; // Null-terminate the received data
-            printf("Server response: %s\n", buffer);
+            buffer[read_bytes] = '\0'; // Null-terminate the received data
+
+            // Check if the received message starts with PRIVMSG
+            if (strncmp(buffer, "PRIVMSG", strlen("PRIVMSG")) == 0)
+            {
+                char *params[4]; // Array to hold command and parameters
+                int num_params = 0;
+
+                // Tokenize the buffer to extract parameters
+                char *token = strtok(buffer, " ");
+                while (token != NULL && num_params < 4)
+                {
+                    params[num_params++] = token;
+                    token = strtok(NULL, " ");
+                }
+
+                for (int i = 0; i < 4; i++)
+                {
+                    printf("params[%d]: %s\n", i, params[i]);
+                }
+
+                // Check if num_params is correct for PRIVMSG command
+                if (num_params == 4)
+                {
+                    // Call function to handle PRIVMSG command
+                    handle_server_privmsg(params, num_params);
+                }
+            }
+            else
+            {
+                buffer[read_bytes] = '\0'; // Null-terminate the received data
+                // Handle other received messages
+                printf("Server response: %s\n", buffer);
+            }
         }
     }
 
@@ -462,7 +524,7 @@ void *handle_client(void *arg)
             params[num_params++] = token;
             token = strtok(NULL, " \r\n");
         }
-        printf(" numparams val : %d" , num_params);
+        printf(" numparams val : %d", num_params);
         // for (int i = 0; i < 10; i++) {
         //     printf("params[%d]: %s\n", i, params[i]);
         // }
@@ -577,14 +639,15 @@ void *handle_client(void *arg)
             break; // Exit the loop if client sends QUIT command
         }
         else if (strcmp(command, "PRIVMSG") == 0)
-        {   
+        {
             printf("here3");
-            for (int i = 0; i < 10; i++) {
-                printf("here4");
+            for (int i = 0; i < 10; i++)
+            {
                 printf("params[%d]: %s\n", i, params[i]);
             }
 
-            if(num_params < 3){
+            if (num_params < 3)
+            {
                 printf("here5");
                 send_error(client_socket, ERR_NEEDMOREPARAMS);
             }
@@ -596,13 +659,13 @@ void *handle_client(void *arg)
             else if (num_params == 4)
             {
                 printf("here7");
-                handle_server_privmsg(client_socket, params, num_params);
+                handle_server_privmsg(params, num_params);
             }
-            else{
+            else
+            {
                 printf("here8");
                 send_error(client_socket, ERR_NORECIPIENT);
             }
-            
         }
         else if (strstr(command, "TIME") != NULL)
         {
@@ -1244,9 +1307,10 @@ void handle_server_njoin(int client_socket, char *params[], int num_params)
     }
 }
 
-
-void handle_server_privmsg(int client_socket, char *params[], int num_params) {
-    if (num_params != 4) {
+void handle_server_privmsg(char *params[], int num_params)
+{
+    if (num_params != 4)
+    {
         printf("Error: PRIVMSG command requires exactly 4 parameters.\n");
         return;
     }
@@ -1254,58 +1318,86 @@ void handle_server_privmsg(int client_socket, char *params[], int num_params) {
     char *target_server_ip_addr = params[1];
 
     // Check if the target server IP is not equal to any server IP in ServerAddress array
-    int found_target_server = 0;
-    for (int i = 0; i < server_info.serverCount; i++) {
-        if (strcmp(target_server_ip_addr, server_info.sockAddr[i].ip) == 0) {
-            found_target_server = 1;
+    int found_target_server = 1;
+    for (int i = 0; i < server_info.serverCount; i++)
+    {
+        if (strcmp(target_server_ip_addr, server_info.nick) == 0)
+        {
+            found_target_server = 0;
             break;
         }
     }
-    printf("/n found target : %d" , found_target_server);
+
+     
+    printf("/n found target : %d", found_target_server);
     // Check if the target server IP is equal to the current server's IP address
-    if (found_target_server == 0) {
+    if (found_target_server == 0)
+    {
         // The target server IP matches the current server's IP
         char *target_nick = params[2];
         char *message = params[3];
 
         // print recieved params for debugging
-        printf(params);
+        // printf(params);
         // Search for the target nick in user_info array
         int target_client_socket = -1;
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (strcmp(target_nick, user_info[i].nickname) == 0) {
+        for (int i = 0; i < MAX_CLIENTS; i++)
+        {
+            remove_extra_spaces(user_info[i].nickname);
+            if (strcmp(target_nick, user_info[i].nickname) == 0)
+            {
                 target_client_socket = user_info[i].client_socket;
                 break;
             }
         }
 
-        if (target_client_socket != -1) {
+        if (target_client_socket != -1)
+        {
             // Send the message to the target client socket
             send(target_client_socket, message, strlen(message), 0);
-        } else {
-            // Target nick not found in user_info array, send error to client
-            send_error(client_socket, ERR_NOSUCHNICK);
         }
-    } else {
-        // Search for the target server IP in ServerAddress array
-        for (int i = 0; i < server_info.serverCount; i++) {
-            if (strcmp(target_server_ip_addr, server_info.sockAddr[i].ip) == 0) {
-                // Found the target server IP, now construct the message to send to the server
-                char full_message[BUFFER_SIZE];
-                snprintf(full_message, BUFFER_SIZE, "%s %s %s %s", params[0], params[1], params[2], params[3]);
+        // else
+        // {
+        //     // Target nick not found in user_info array, send error to client
+        //     send_error(client_socket, ERR_NOSUCHNICK);
+        // }
+    }
+    else
+    {
 
-                // Send the message to the target server's server_port
-                int target_server_port = server_info.sockAddr[i].server_port;
-                send(target_server_port, full_message, strlen(full_message), 0);
-                return;
+        char full_message[BUFFER_SIZE];
+        
+        for (int i = 0; i < MAX_CLIENTS; i++)
+        {
+            remove_extra_spaces(user_info[i].nickname);
+            // printf("Checking nickname: %s with msgtarget %s\n", user_info[i].nickname, msgtarget);
+            if (strcmp(user_info[i].nickname, target_server_ip_addr) == 0)
+            {
+                // printf("Nickname found: %s with socket %d\n", target_server_ip_addr, user_info[i].client_socket);
+                snprintf(full_message, BUFFER_SIZE, "%s %s %s %s", params[0], params[1], params[2], params[3]);
+                // printf("Sending private message to %s (socket %d)\n", msgtarget, user_info[i].client_socket);
+                send(user_info[i].client_socket, full_message, strlen(full_message), 0);
+                // printf("Sending private message to %s (socket %d)\n", msgtarget, user_info[i].client_socket);
+                break;
             }
         }
 
+        // Send the message to the target server's server_port
+
+        //send(server_info.client_port, full_message, strlen(full_message), 0);
+
+    // for (int i = 0; i < MAX_CONNECTED_SERVERS; i++)
+    // {
+    //     if (serverConfig[i].client_port > 0)
+    //     { // Assuming there's a field to check if the socket is active
+    //         send(serverConfig[i].client_port, full_message, strlen(full_message), 0);
+    //         //printf("Sent SQUIT to %s (%s)\n", serverConfig[i].nick, serverConfig[i].sockAddr[0].ip);
+    //     }
+    // }
         // If the target server IP is not found, send an error to the client
-        send_error(client_socket, ERR_NOSUCHSERVER);
+        // send_error(client_socket, ERR_NOSUCHSERVER);
     }
 }
-
 
 void broadcast_squit(char *server_name, char *comment)
 {
@@ -1347,14 +1439,18 @@ void shutdown_all_connections()
     }
 }
 
-void handle_pass_command(int client_socket, const char *password) {
+void handle_pass_command(int client_socket, const char *password)
+{
     // Check if the client has already registered (simplified by checking nickname or some registration flag)
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (user_info[i].client_socket == client_socket) {
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (user_info[i].client_socket == client_socket)
+        {
             // Check if user has already been registered
-            if (strlen(user_info[i].nickname) > 0) {
+            if (strlen(user_info[i].nickname) > 0)
+            {
                 printf("Error: User has already registered. PASS must be set before NICK/USER.\n");
-                return;  // Do not overwrite or set password if already registered
+                return; // Do not overwrite or set password if already registered
             }
 
             // Store the password for new or unregistered users
@@ -1370,9 +1466,11 @@ void handle_pass_command(int client_socket, const char *password) {
     printf("Error: Client socket %d not found in user_info array.\n", client_socket);
 }
 
-void save_password_to_file(int client_socket, const char *password) {
-    FILE *file = fopen(".usr_pass", "a");  // Open the file in append mode
-    if (file == NULL) {
+void save_password_to_file(int client_socket, const char *password)
+{
+    FILE *file = fopen(".usr_pass", "a"); // Open the file in append mode
+    if (file == NULL)
+    {
         perror("Failed to open password file");
         return;
     }
@@ -1380,4 +1478,3 @@ void save_password_to_file(int client_socket, const char *password) {
     fclose(file);
     printf("Password for socket %d saved successfully in .usr_pass file.\n", client_socket);
 }
-
