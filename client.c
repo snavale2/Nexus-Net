@@ -4,7 +4,8 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <pthread.h>
-
+#include "base64_utils.h" // Include your Base64 utility header
+#include <ctype.h>
 #define CONFIG_FILE "client.conf"
 #define BUFFER_SIZE 1024
 #define QUIT_MESSAGE "QUIT"
@@ -74,11 +75,9 @@ void *receive_messages(void *arg) {
 int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
-    char message[BUFFER_SIZE];
+    char message[BUFFER_SIZE], encoded_password[BUFFER_SIZE];
     pthread_t recv_thread;
-    int valread;
     
-
     // Read configuration from client.conf
     read_config(SERVER_IP, &PORT);
 
@@ -104,14 +103,34 @@ int main() {
     pthread_create(&recv_thread, NULL, receive_messages, (void *)&sock);
 
     while (1) {
-        printf("Enter message (type 'QUIT' to exit):\n");
+        //printf("Enter command:\n");
         fgets(message, BUFFER_SIZE, stdin);
+        message[strcspn(message, "\n")] = 0; // Remove newline character for clean processing
+
+        // Check if the command starts with "NICK"
+        if (strncmp(message, "NICK", 4) == 0) {
+            char *nickname = strtok(message + 5, " "); // Skip "NICK " and get nickname
+            char *password = strtok(NULL, ""); // Get the rest (password)
+
+            if (password && password[0] == ':') {
+                password++; // Skip ':'
+                base64_encode((const unsigned char *)password, strlen(password), encoded_password);
+                //printf("Encoded password: %s\n", encoded_password); // Debug print of the encoded password
+                snprintf(message, BUFFER_SIZE, "NICK %s :%s", nickname, encoded_password);
+            }
+        } else if (strncmp(message, "PASS", 4) == 0) {
+            char *password = message + 5; // Pointer arithmetic to skip "PASS "
+            if (*password == ':') password++; // Skip ':' if directly after "PASS"
+            base64_encode((unsigned char *)password, strlen(password), encoded_password);
+            snprintf(message, BUFFER_SIZE, "PASS %s", encoded_password); // Prepare the full command with encoded password
+            //printf("Encoded password: %s\n", encoded_password); // Debug print of the encoded password
+        }
 
         // Send message to server
         send(sock, message, strlen(message), 0);
 
         // Check if message is "QUIT"
-        if (strncmp(message, QUIT_MESSAGE, strlen(QUIT_MESSAGE)) == 0) {
+        if (strcmp(message, "QUIT") == 0) {
             break; // Exit loop and close connection
         }
     }

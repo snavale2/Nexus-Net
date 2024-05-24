@@ -2,8 +2,9 @@
 
 ## Overview
 
-This project implements a basic version of an IRC (Internet Relay Chat) server and client based on the RFC 2812 specification. It allows multiple clients to connect to the server, join channels, send messages, and perform other IRC-related commands.
+This project implements a basic version of an IRC (Internet Relay Chat) server and client based on the RFC 2812 & 2813 specification. It allows multiple clients to connect to the server, join channels, send messages, and perform other IRC-related commands.
 
+It also allows multiple servers to join in network and exchange private message between clients on different server and server to server communication.
 ## Files
 
 - `server.c`: Contains the source code for the IRC server. It handles multiple client connections, channel management, and message forwarding.
@@ -20,17 +21,17 @@ To compile the server and client, use the provided Makefile:
 make
 
 
-./server
+./server server.conf
 
-./client
+./client client.conf
 
 OR DO IT MANUALLY
 
 gcc -w  server.c -o server
-./server
+./server server.conf
 
-gcc -Wall client.c -o client
-./client
+gcc -Wall client.c base64_utils.c -o client
+./client client.conf
 
 
 This README provides a basic guide to what each file in the project is for, how to compile the programs using the Makefile, and how to run the server and client manually.
